@@ -59,6 +59,56 @@ async function getTokens() {
   return tokens;
 }
 
+async function get(drive) {
+  const fileId = process.argv[3];
+  const fields = 'id, name, parents';
+  const file = await drive.files.get({
+    fileId,
+    fields,
+  }).catch(e => {
+    console.error(`Error getting file ${fileId}`, e.code, e.message,
+     e.response.statusText, e.response.data.error_description);
+  });
+ 
+  if (file) {
+    if (file.data) console.log(JSON.stringify(file.data));
+    else console.log(JSON.stringify(file));
+  }
+}
+
+async function list(drive) {
+  let pageToken = null;
+  let q = process.argv.slice(3).join(' ');
+  if (!q) q = '\'root\' in parents';
+  console.log(`Listing ${q}`);
+  const pageSize = 1000;
+  const fields = 'nextPageToken, files(id, name, parents)';
+  while (true) {
+    const ls = await drive.files.list({
+      pageSize,
+      pageToken,
+      fields,
+    }).catch(e => {
+      console.error(`Error listing files ${q}`, e.code, e.message,
+       e.response.statusText, e.response.data.error_description);
+    });
+
+    q = null;
+
+    if (ls) {
+      if (ls.data) {
+	if (ls.data.files.length === 0) break;
+        pageToken = ls.data.nextPageToken;
+        for (const file of ls.data.files) console.log(JSON.stringify(file));
+      }
+      else {
+	console.log(JSON.stringify(ls));
+	break;
+      }
+    } else break;
+  }
+}
+
 async function main() {
   const tokens = await getTokens().catch(err => {
     console.error('Error getting tokens', err.code, err.message, err.stack);
@@ -74,17 +124,15 @@ async function main() {
   auth.setCredentials(tokens);
 
   const drive = google.drive({version: 'v3', auth});
-  const ls = await drive.files.list({
-    pageSize: 10,
-    fields: 'nextPageToken, files(id, name)',
-  }).catch(e => {
-    console.error('Error listing files', e.code, e.message,
-     e.response.statusText, e.response.data.error_description);
-  });;
 
-  if (ls) {
-    if (ls.data) console.log(JSON.stringify(ls.data));
-    else console.log(JSON.stringify(ls));
+  switch (process.argv[2]) {
+    case 'get':
+      await get(drive);
+      break;
+    case 'ls':
+      await list(drive);
+      break;
+    default: console.log('Usage: gdc commmand');
   }
 }
 
