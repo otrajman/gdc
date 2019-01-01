@@ -59,9 +59,13 @@ async function getTokens() {
   return tokens;
 }
 
-async function get(drive, fileId = null) {
-  if (!fileId) fileId = process.argv[3];
-  const fields = 'id, name, parents';
+async function get(drive, fileId = null, data = true) {
+  let save_file = null;
+  if (!fileId) {
+    if (process.argv.length > 3) fileId = process.argv[3];
+    if (process.argv.length > 4) save_file = process.argv[4];
+  }
+  const fields = 'id, name, parents, createdTime, modifiedTime';
   const file = await drive.files.get({
     fileId,
     fields,
@@ -73,7 +77,43 @@ async function get(drive, fileId = null) {
   if (file) {
     if (file.data) {
       console.log(JSON.stringify(file.data));
-      return file.data.id;
+      let file_data = null;
+      if (data) {
+	console.log('Fetching data');
+        file_data = await drive.files.get({
+          fileId,
+          alt: 'media',
+        }).catch(e => {
+          console.error(`Error getting file data ${fileId}`, e.code, e.message,
+            e.response.statusText, e.response.data.error_description);
+        });
+	if (file_data && file_data.data) console.log(`Fetched ${file_data.data.length} bytes`); 
+	else console('Fetch failed');
+      }
+
+      if (save_file) save_file = file.data.name;
+
+      const base = save_file;
+      let index = 0;
+      while (fs.existsSync(save_file)) {
+	console.log(save_file);
+        save_file = `${base} (${index})`;
+	index++;
+      }
+
+      if (file_data && file_data.data) {
+	console.log(`Saving ${file_data.data.length} bytes to ${save_file}`);
+	fs.writeFileSync(save_file, file_data.data);
+      }
+
+      return {
+	id:file.data.id,
+	name:file.data.name,
+	created: file.data.createdTime,
+	modified: file.data.modifiedTime,
+	parents:file.data.parents,
+	data:file_data? file_data.data : null,
+      }
     }
     else console.log(JSON.stringify(file));
   }
@@ -81,21 +121,24 @@ async function get(drive, fileId = null) {
 
 async function list(drive) {
   let pageToken = null;
-  let q = process.argv.slice(3).join(' ');
-  if (!q) {
-    const root = await get(drive, 'root');
-    q = `'${root}' in parents`;
+  let path = process.argv.slice(3).join(' ');
+  const root = await get(drive, 'root', false);
+  const q = [`'${root.id}' in parents`];
+  if (path) {
+    const paths = path.split(/\/\\/);
+    q.push(`and name = ${paths[0]}`);
   }
+  
   console.log(`Listing ${q}`);
   const pageSize = 1000;
-  const fields = 'nextPageToken, files(id, name, parents)';
+  const fields = 'nextPageToken, files(id, name, parents, createdTime, modifiedTime)';
   let total = 0;
   while (true) {
     const ls = await drive.files.list({
       pageSize,
       pageToken,
-      fields, 
-      q,
+      fields,
+      q:q.join(' '),
     }).catch(e => {
       console.error(`Error listing files ${q}`, e.code, e.message,
        e.response.statusText, e.response.data.error_description);
@@ -107,7 +150,7 @@ async function list(drive) {
       if (ls.data) {
 	if (ls.data.files.length === 0) break;
         pageToken = ls.data.nextPageToken;
-        for (const file of ls.data.files) console.log(file.name); //JSON.stringify(file));
+        for (const file of ls.data.files) console.log(`${file.name} ${file.id} ${file.modifiedTime}`); //JSON.stringify(file));
 	total += ls.data.files.length;
       }
       else {
