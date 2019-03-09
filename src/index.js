@@ -61,6 +61,7 @@ async function getTokens() {
 
 async function get(drive, fileId = null, data = true) {
   let save_file = null;
+  let fetch_data = [];
   if (!fileId) {
     if (process.argv.length > 3) fileId = process.argv[3];
     if (process.argv.length > 4) save_file = process.argv[4];
@@ -83,27 +84,38 @@ async function get(drive, fileId = null, data = true) {
         file_data = await drive.files.get({
           fileId,
           alt: 'media',
-        }).catch(e => {
+        }, {responseType: 'stream'}).catch(e => {
           console.error(`Error getting file data ${fileId}`, e.code, e.message,
             e.response.statusText, e.response.data.error_description);
         });
-	if (file_data && file_data.data) console.log(`Fetched ${file_data.data.length} bytes`); 
-	else console('Fetch failed');
-      }
 
-      if (save_file) save_file = file.data.name;
+        if (file_data) {
+          await new Promise((c,r) => {
+            if (!save_file) save_file = file.data.name;
 
-      const base = save_file;
-      let index = 0;
-      while (fs.existsSync(save_file)) {
-	console.log(save_file);
-        save_file = `${base} (${index})`;
-	index++;
-      }
+            const base = save_file;
+            let index = 0;
+            while (fs.existsSync(save_file)) {
+              console.log(save_file);
+              save_file = `${base} (${index})`;
+              index++;
+	    }
 
-      if (file_data && file_data.data) {
-	console.log(`Saving ${file_data.data.length} bytes to ${save_file}`);
-	fs.writeFileSync(save_file, file_data.data);
+	    //console.log(`Saving ${file_data.data.length} bytes to ${save_file}`);
+	   //fs.writeFileSync(save_file, file_data.data);
+	    const out = fs.createWriteStream(save_file);
+	    let bytes = 0;
+
+	    file_data.on('end', () => {
+	      console.log(`Fetched ${bytes} bytes`); 
+	      c();
+	    }).on('error', err => {
+              console.error('Fetch error', err);
+	    }).on('data', d => {
+	      bytes += bytes;
+	    }).pipe(out);
+          });
+	} else console('Fetch failed');
       }
 
       return {
@@ -112,7 +124,7 @@ async function get(drive, fileId = null, data = true) {
 	created: file.data.createdTime,
 	modified: file.data.modifiedTime,
 	parents:file.data.parents,
-	data:file_data? file_data.data : null,
+	data:Buffer.concat(fetch_data),
       }
     }
     else console.log(JSON.stringify(file));
@@ -188,6 +200,10 @@ async function main() {
     case 'ls':
       await list(drive);
       break;
+    case 'help':
+     console.log('Commands:');
+     console.log('  get <file_id> [output]');
+     console.log('  ls [path]');
     default: console.log('Usage: gdc commmand');
   }
 }
